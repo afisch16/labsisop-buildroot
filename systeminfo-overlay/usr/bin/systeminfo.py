@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 
 
-def read_cpu_times():
+def read_cpu_times(): # função auxiliar usada para calcular o uso da CPU 
     try:
         with open("/proc/stat", "r") as file:
             cpu_values = file.readline().split()[1:]
@@ -26,11 +26,11 @@ def read_cpu_times():
         return 0, 0
 
 
-def get_datetime():
+def get_datetime(): # pega a data e hora 
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_uptime():
+def get_uptime(): # tempo desde que o sistema foi iniciado
     try:
         with open("/proc/uptime", "r") as file:
             uptime_data = file.read().split()[0]
@@ -41,7 +41,7 @@ def get_uptime():
         return 0
 
 
-def get_cpu_info():
+def get_cpu_info(): # Busca o modelo, a frequência e calcula o uso da CPU
     model = "Unknown"
     speed_mhz = 0
     usage_percent = 0.0
@@ -93,8 +93,8 @@ def get_cpu_info():
     }
 
 
-def get_memory_info():
-    memory_values = {}
+def get_memory_info(): # percorre o arquivo e guarda os campos no dicionário
+    memory_values = {} #  pega a memória total e calcula a memória usada 
 
     try:
         with open("/proc/meminfo", "r") as file:
@@ -125,7 +125,7 @@ def get_memory_info():
     }
 
 
-def get_os_version():
+def get_os_version(): # Versão do kernel e informações da compilação
     try:
         with open("/proc/version", "r") as file:
             os_version = file.read().strip()
@@ -135,7 +135,7 @@ def get_os_version():
         return "Unknown"
 
 
-def get_process_list():
+def get_process_list(): # Processos em execução, com número de identificação e nome
     processes = []
 
     try:
@@ -162,7 +162,7 @@ def get_process_list():
     return processes
 
 
-def get_disks():
+def get_disks(): # Discos encontrados e seus tamanhos em MB
     disks = []
 
     try:
@@ -190,7 +190,7 @@ def get_disks():
     return disks
 
 
-def get_usb_devices():
+def get_usb_devices(): # Dispositivos USB encontrados, com porta e descrição
     usb_devices = []
     usb_path = "/sys/bus/usb/devices"
 
@@ -225,7 +225,7 @@ def get_usb_devices():
     return usb_devices
 
 
-def get_network_adapters():
+def get_network_adapters(): # Interfaces de rede e seus endereços IPv4
     network_path = "/sys/class/net"
 
     try:
@@ -308,7 +308,7 @@ def get_network_adapters():
 
 
 class StatusHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_GET(self): # Tratamento das requisições GET 
         if self.path != "/status":
             self.send_response(404)
             self.end_headers()
@@ -335,7 +335,7 @@ class StatusHandler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
 
-def run_server(port=8080):
+def run_server(port=8080): # Inicialização do servidor
     print(f"Servidor disponível em http://0.0.0.0:{port}/status")
     server = HTTPServer(("0.0.0.0", port), StatusHandler)
     server.serve_forever()
