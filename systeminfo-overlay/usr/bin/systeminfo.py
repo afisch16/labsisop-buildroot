@@ -12,14 +12,16 @@ from datetime import datetime
 def read_cpu_times():
     try:
         with open("/proc/stat", "r") as file:
-            values = file.readline().split()[1:]
+            cpu_values = file.readline().split()[1:]
 
-        times = [int(value) for value in values]
-        idle = times[3]
-        if len(times) > 4:
-            idle += times[4]
+        cpu_times = [int(value) for value in cpu_values]
+        idle_time = cpu_times[3]
 
-        return sum(times), idle
+        if len(cpu_times) > 4:
+            idle_time += cpu_times[4]
+
+        total_time = sum(cpu_times)
+        return total_time, idle_time
     except (OSError, ValueError, IndexError):
         return 0, 0
 
@@ -31,7 +33,10 @@ def get_datetime():
 def get_uptime():
     try:
         with open("/proc/uptime", "r") as file:
-            return int(float(file.read().split()[0]))
+            uptime_data = file.read().split()[0]
+
+        uptime_seconds = int(float(uptime_data))
+        return uptime_seconds
     except (OSError, ValueError, IndexError):
         return 0
 
@@ -39,6 +44,8 @@ def get_uptime():
 def get_cpu_info():
     model = "Unknown"
     speed_mhz = 0
+    usage_percent = 0.0
+    frequency_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
 
     try:
         with open("/proc/cpuinfo", "r") as file:
@@ -61,7 +68,6 @@ def get_cpu_info():
         pass
 
     try:
-        frequency_path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq"
         with open(frequency_path, "r") as file:
             speed_mhz = round(int(file.read().strip()) / 1000, 2)
     except (OSError, ValueError):
@@ -88,27 +94,27 @@ def get_cpu_info():
 
 
 def get_memory_info():
-    values = {}
+    memory_values = {}
 
     try:
         with open("/proc/meminfo", "r") as file:
             for line in file:
                 key, value = line.split(":", 1)
-                values[key] = int(value.split()[0])
+                memory_values[key] = int(value.split()[0])
     except (OSError, ValueError, IndexError):
         return {
             "total_mb": 0,
             "used_mb": 0
         }
 
-    total_kb = values.get("MemTotal", 0)
-    available_kb = values.get("MemAvailable")
+    total_kb = memory_values.get("MemTotal", 0)
+    available_kb = memory_values.get("MemAvailable")
 
     if available_kb is None:
         available_kb = (
-            values.get("MemFree", 0)
-            + values.get("Buffers", 0)
-            + values.get("Cached", 0)
+            memory_values.get("MemFree", 0)
+            + memory_values.get("Buffers", 0)
+            + memory_values.get("Cached", 0)
         )
 
     used_kb = max(0, total_kb - available_kb)
@@ -122,7 +128,9 @@ def get_memory_info():
 def get_os_version():
     try:
         with open("/proc/version", "r") as file:
-            return file.read().strip()
+            os_version = file.read().strip()
+
+        return os_version
     except OSError:
         return "Unknown"
 
@@ -131,11 +139,11 @@ def get_process_list():
     processes = []
 
     try:
-        entries = os.listdir("/proc")
+        process_entries = os.listdir("/proc")
     except OSError:
         return processes
 
-    for entry in entries:
+    for entry in process_entries:
         if not entry.isdigit():
             continue
 
@@ -171,7 +179,6 @@ def get_disks():
                 sectors = int(file.read().strip())
             if sectors <= 0:
                 continue
-
 
             disks.append({
                 "device": f"/dev/{device}",
@@ -265,7 +272,10 @@ def get_network_adapters():
     except (OSError, ValueError, StopIteration):
         pass
 
-    addresses_by_interface = {interface: "" for interface in interfaces}
+    addresses_by_interface = {}
+
+    for interface in interfaces:
+        addresses_by_interface[interface] = ""
 
     for address in sorted(local_addresses, key=ipaddress.IPv4Address):
         if address.startswith("127.") and "lo" in addresses_by_interface:
@@ -286,13 +296,15 @@ def get_network_adapters():
             if not addresses_by_interface[interface]:
                 addresses_by_interface[interface] = address
 
-    return [
-        {
+    network_adapters = []
+
+    for interface in interfaces:
+        network_adapters.append({
             "interface": interface,
             "ip_address": addresses_by_interface[interface]
-        }
-        for interface in interfaces
-    ]
+        })
+
+    return network_adapters
 
 
 class StatusHandler(BaseHTTPRequestHandler):
