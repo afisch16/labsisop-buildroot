@@ -13,3 +13,6 @@ fi
 BUILDROOT_DIR=$BASE_DIR/..
 COMPILER=$BUILDROOT_DIR/output/host/bin/i686-buildroot-linux-gnu-gcc
 $COMPILER -o $BUILDROOT_DIR/output/target/bin/syscall_test $BUILDROOT_DIR/custom-scripts/syscall_test.c
+
+# Compile sleep_process_test.c
+$COMPILER -o $BUILDROOT_DIR/output/target/bin/sleep_process_test $BUILDROOT_DIR/custom-scripts/sleep_process_test.c
