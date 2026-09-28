@@ -12,6 +12,8 @@
 #include <linux/kernel.h>         // Contains types, macros, functions for the kernel
 #include <linux/fs.h>             // Header for the Linux file system support
 #include <linux/uaccess.h>
+#include <linux/list.h>
+#include <linux/slab.h>
 
 #define  DEVICE_NAME "simple_driver" ///< The device will appear at /dev/simple_driver using this value
 #define  CLASS_NAME  "simple_class"        ///< The device class -- this is a character device driver
@@ -22,8 +24,17 @@ MODULE_DESCRIPTION("A generic Linux char driver.");  ///< The description -- see
 MODULE_VERSION("0.2");            ///< A version number to inform users
 
 static int    majorNumber;                  ///< Stores the device number -- determined automatically
-static char   message[256] = {0};           ///< Memory for the string that is passed from userspace
-static short  size_of_message;              ///< Used to remember the size of the string stored
+// static char   message[256] = {0};           ///< Memory for the string that is passed from userspace
+// static short  size_of_message;              ///< Used to remember the size of the string stored
+#define MESSAGE_MAX_SIZE 256
+
+struct stored_message {
+	struct list_head list;
+	size_t size;
+	char data[MESSAGE_MAX_SIZE];
+};
+
+static LIST_HEAD(message_list);
 static int    numberOpens = 0;              ///< Counts the number of times the device is opened
 static struct class *charClass  = NULL; ///< The device-driver class struct pointer
 static struct device *charDevice = NULL; ///< The device-driver device struct pointer
@@ -96,6 +107,13 @@ static int __init simple_init(void){
  *  code is used for a built-in driver (not a LKM) that this function is not required.
  */
 static void __exit simple_exit(void){
+	struct stored_message *stored;
+	struct stored_message *tmp;
+
+	list_for_each_entry_safe(stored, tmp, &message_list, list){
+		list_del(&stored->list);
+		kfree(stored);
+	}
 	device_destroy(charClass, MKDEV(majorNumber, 0));     // remove the device
 	class_unregister(charClass);                          // unregister the device class
 	class_destroy(charClass);                             // remove the device class
@@ -124,7 +142,7 @@ static int dev_open(struct inode *inodep, struct file *filep){
  *  @param len The length of the b
  *  @param offset The offset if required
  */
-static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset){
+/*static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset){
 	int error_count = 0;
    
 	// copy_to_user has the format ( * to, *from, size) and returns 0 on success
@@ -139,6 +157,31 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
 		return -EFAULT;              // Failed -- return a bad address message (i.e. -14)
 	}
 }
+*/
+static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *offset){
+	struct stored_message *stored;
+
+	if (list_empty(&message_list)){
+		return 0;
+	}
+
+	stored = list_first_entry(&message_list, struct stored_message, list);
+
+	if (len < stored->size){
+		return -EINVAL;
+	}
+
+	if (copy_to_user(buffer, stored->data, stored->size)){
+		return -EFAULT;
+	}
+
+	len = stored->size;
+	list_del(&stored->list);
+	kfree(stored);
+
+	printk(KERN_INFO "Simple Driver: sent %zu characters to the user\n", len);
+	return len;
+}
 
 
 /** @brief This function is called whenever the device is being written to from user space i.e.
@@ -149,7 +192,7 @@ static ssize_t dev_read(struct file *filep, char *buffer, size_t len, loff_t *of
  *  @param len The length of the array of data that is being passed in the const char buffer
  *  @param offset The offset if required
  */
-static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset){
+/*static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset){
 	if (len < sizeof(message)){
 		sprintf(message, "%s(%zu letters)", buffer, len);   // appending received string with its length
 		size_of_message = strlen(message);                 // store the length of the stored message
@@ -162,6 +205,32 @@ static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, lof
 		
 		return 0;
 	}
+}
+*/
+static ssize_t dev_write(struct file *filep, const char *buffer, size_t len, loff_t *offset){
+	struct stored_message *new_message;
+
+	if (len >= MESSAGE_MAX_SIZE){
+		printk(KERN_INFO "Simple Driver: too many characters to deal with\n");
+		return -EINVAL;
+	}
+
+	new_message = kmalloc(sizeof(*new_message), GFP_KERNEL);
+	if (!new_message){
+		return -ENOMEM;
+	}
+
+	if (copy_from_user(new_message->data, buffer, len)){
+		kfree(new_message);
+		return -EFAULT;
+	}
+
+	new_message->data[len] = '\0';
+	new_message->size = len;
+	list_add_tail(&new_message->list, &message_list);
+
+	printk(KERN_INFO "Simple Driver: received %zu characters from the user\n", len);
+	return len;
 }
 
 /** @brief The device release function that is called whenever the device is closed/released by
