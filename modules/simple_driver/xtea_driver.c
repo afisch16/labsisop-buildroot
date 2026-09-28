@@ -1,5 +1,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
@@ -14,6 +15,19 @@
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("XTEA character driver");
+
+/* Chaves configuráveis ao carregar o módulo */
+static char *key0 = "f0e1d2c3";
+static char *key1 = "b4a59687";
+static char *key2 = "78695a4b";
+static char *key3 = "3c2d1e0f";
+
+module_param(key0, charp, 0444);
+module_param(key1, charp, 0444);
+module_param(key2, charp, 0444);
+module_param(key3, charp, 0444);
+
+static u32 xtea_key[4];
 
 static int majorNumber;
 static struct class *charClass;
@@ -84,6 +98,14 @@ static int hex_byte(const char *text, u8 *value)
 
 static int __init xtea_init(void)
 {
+	if (kstrtou32(key0, 16, &xtea_key[0]) ||
+	    kstrtou32(key1, 16, &xtea_key[1]) ||
+	    kstrtou32(key2, 16, &xtea_key[2]) ||
+	    kstrtou32(key3, 16, &xtea_key[3])) {
+		printk(KERN_ERR "XTEA Driver: invalid key parameter\n");
+		return -EINVAL;
+	}
+
 	printk(KERN_INFO "XTEA Driver: initializing\n");
 
 	majorNumber = register_chrdev(0, DEVICE_NAME, &fops);
@@ -133,7 +155,6 @@ static ssize_t dev_write(struct file *filep, const char *buffer,
 	char input[MAX_COMMAND_SIZE];
 	char operation[4];
 	char hex_data[MAX_DATA_SIZE * 2 + 1];
-	u32 key[4];
 	u32 data_size;
 	u8 data[MAX_DATA_SIZE];
 	u32 block, i, v[2];
@@ -145,9 +166,9 @@ static ssize_t dev_write(struct file *filep, const char *buffer,
 		return -EFAULT;
 	input[len] = '\0';
 
-	if (sscanf(input, "%3s %x %x %x %x %u %256s",
-		   operation, &key[0], &key[1], &key[2], &key[3],
-		   &data_size, hex_data) != 7)
+	/* Formato: comando tamanho dados_em_hex */
+	if (sscanf(input, "%3s %u %256s",
+		   operation, &data_size, hex_data) != 3)
 		return -EINVAL;
 
 	if (strcmp(operation, "enc") != 0 &&
@@ -171,17 +192,18 @@ static ssize_t dev_write(struct file *filep, const char *buffer,
 		       ((u32)data[block + 1] << 16) |
 		       ((u32)data[block + 2] << 8) |
 		       (u32)data[block + 3];
+
 		v[1] = ((u32)data[block + 4] << 24) |
 		       ((u32)data[block + 5] << 16) |
 		       ((u32)data[block + 6] << 8) |
 		       (u32)data[block + 7];
 
 		if (strcmp(operation, "enc") == 0)
-			encipher(v, key);
+			encipher(v, xtea_key);
 		else
-			decipher(v, key);
+			decipher(v, xtea_key);
 
-		data[block]     = (v[0] >> 24) & 0xff;
+		data[block] = (v[0] >> 24) & 0xff;
 		data[block + 1] = (v[0] >> 16) & 0xff;
 		data[block + 2] = (v[0] >> 8) & 0xff;
 		data[block + 3] = v[0] & 0xff;
