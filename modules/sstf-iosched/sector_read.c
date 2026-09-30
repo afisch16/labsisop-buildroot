@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
 #define BUFFER_LENGTH 512
 #define DISK_SZ 1073741824
@@ -30,10 +31,23 @@ int main()
 	system("echo 0 > /sys/block/sdb/queue/read_ahead_kb");
 
 	printf("Forking processes to put stress on disk scheduler...\n");
-	for (int i = 0; i < FORKS; i++)
-		fork();
+	for (i = 0; i < FORKS; i++) {
+    	pid = fork();
+    	if (pid < 0) {
+        	perror("fork");
+        	return 1;
+    	}
+    	if (pid == 0)
+        	break;
+	}
 
-	srand(getpid());
+	if (i == FORKS) {
+    	for (i = 0; i < FORKS; i++)
+        	wait(NULL);
+    	return 0;
+	}
+
+	srand(i + 1);
 
 	fd = open("/dev/sdb", O_RDWR);
 	if (fd < 0) {
