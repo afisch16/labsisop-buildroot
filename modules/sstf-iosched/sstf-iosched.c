@@ -14,6 +14,7 @@
 /* SSTF data structure. */
 struct sstf_data {
 	struct list_head queue;
+	sector_t last_sector;
 };
 
 static void sstf_merged_requests(struct request_queue *q, struct request *rq,
@@ -23,26 +24,33 @@ static void sstf_merged_requests(struct request_queue *q, struct request *rq,
 }
 
 /* Esta função despacha o próximo bloco a ser lido. */
-static int sstf_dispatch(struct request_queue *q, int force){
-	struct sstf_data *nd = q->elevator->elevator_data;
-	char direction = 'R';
-	struct request *rq;
+static int sstf_dispatch(struct request_queue *q, int force)
+{
+    struct sstf_data *nd = q->elevator->elevator_data;
+    struct request *rq, *best = NULL;
+    sector_t pos, distance, best_distance = 0;
 
-	/* Aqui deve-se retirar uma requisição da fila e enviá-la para processamento.
-	 * Use como exemplo o driver noop-iosched.c. Veja como a requisição é tratada.
-	 *
-	 * Antes de retornar da função, imprima o sector que foi atendido.
-	 */
+    list_for_each_entry(rq, &nd->queue, queuelist) {
+        pos = blk_rq_pos(rq);
+        distance = pos > nd->last_sector
+            ? pos - nd->last_sector
+            : nd->last_sector - pos;
 
-	rq = list_first_entry_or_null(&nd->queue, struct request, queuelist);
-	if (rq) {
-		list_del_init(&rq->queuelist);
-		elv_dispatch_sort(q, rq);
-		printk(KERN_EMERG "[SSTF] dsp %c %llu\n", direction, blk_rq_pos(rq));
+        if (!best || distance < best_distance) {
+            best = rq;
+            best_distance = distance;
+        }
+    }
 
-		return 1;
-	}
-	return 0;
+    if (!best)
+        return 0;
+
+    list_del_init(&best->queuelist);
+    nd->last_sector = blk_rq_pos(best);
+    elv_dispatch_sort(q, best);
+    printk(KERN_EMERG "[SSTF] dsp R %llu\n",
+           (unsigned long long)blk_rq_pos(best));
+    return 1;
 }
 
 static void sstf_add_request(struct request_queue *q, struct request *rq){
@@ -81,6 +89,7 @@ static int sstf_init_queue(struct request_queue *q, struct elevator_type *e){
 	eq->elevator_data = nd;
 
 	INIT_LIST_HEAD(&nd->queue);
+	nd->last_sector = 0;
 
 	spin_lock_irq(q->queue_lock);
 	q->elevator = eq;
