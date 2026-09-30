@@ -1,0 +1,162 @@
+diff --git a/arch/x86/entry/syscalls/syscall_32.tbl b/arch/x86/entry/syscalls/syscall_32.tbl
+index 70fc5ba4..5bafec08 100644
+--- a/arch/x86/entry/syscalls/syscall_32.tbl
++++ b/arch/x86/entry/syscalls/syscall_32.tbl
+@@ -392,3 +392,5 @@
+ 383	i386	statx			sys_statx
+ 384	i386	arch_prctl		sys_arch_prctl			compat_sys_arch_prctl
+ 385     i386    listProcessInfo         sys_listProcessInfo
++386	i386	listSleepProcesses	sys_listSleepProcesses
++387	i386	printMessage	        sys_printMessage
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index 0c2ca7ba..ec51aa82 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -906,4 +906,6 @@ asmlinkage long sys_pkey_free(int pkey);
+ asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
+ 			  unsigned mask, struct statx __user *buffer);
+ asmlinkage long sys_listProcessInfo(long pid, const char __user *buf, int size);
++asmlinkage long sys_listSleepProcesses(char __user *buf, int size);
++asmlinkage long sys_printMessage(const char __user *msg);
+ #endif
+diff --git a/syscall/Makefile b/syscall/Makefile
+index 5493000b..d421735f 100644
+--- a/syscall/Makefile
++++ b/syscall/Makefile
+@@ -1 +1,2 @@
+-obj-y:=processInfo.o
++obj-y:=processInfo.o sleepProcesses.o
++obj-y += printMessage.o
+diff --git a/syscall/printMessage.c b/syscall/printMessage.c
+new file mode 100644
+index 00000000..bc527d67
+--- /dev/null
++++ b/syscall/printMessage.c
+@@ -0,0 +1,20 @@
++#include <linux/kernel.h>
++#include <linux/syscalls.h>
++#include <linux/uaccess.h>
++#include <linux/errno.h>
++#include "printMessage.h"
++
++asmlinkage long sys_printMessage(const char __user *msg)
++{
++        char buf[256];
++        long copied;
++
++        copied = strncpy_from_user(buf, msg, sizeof(buf));
++
++        if (copied < 0 || copied == sizeof(buf))
++                return -EFAULT;
++
++        printk(KERN_INFO "Message: %s\n", buf);
++
++        return 0;
++}
+diff --git a/syscall/printMessage.h b/syscall/printMessage.h
+new file mode 100644
+index 00000000..56c2387d
+--- /dev/null
++++ b/syscall/printMessage.h
+@@ -0,0 +1 @@
++asmlinkage long sys_printMessage(const char __user *msg);
+diff --git a/syscall/sleepProcesses.c b/syscall/sleepProcesses.c
+new file mode 100644
+index 00000000..9ffbe05e
+--- /dev/null
++++ b/syscall/sleepProcesses.c
+@@ -0,0 +1,82 @@
++#include <linux/kernel.h>
++#include <linux/sched.h>
++#include <linux/sched/signal.h>
++#include <linux/syscalls.h>
++#include <linux/slab.h>
++#include <linux/uaccess.h>
++#include <linux/errno.h>
++#include "sleepProcesses.h"
++
++#define SLEEP_BUFFER_MAX 4096
++
++asmlinkage long sys_listSleepProcesses(char __user *buf, int size)
++{
++    struct task_struct *process;
++    char *kbuf;
++    const char *state_name;
++    long state;
++    int used = 0;
++    int written;
++
++    if (!buf || size <= 0 || size > SLEEP_BUFFER_MAX)
++        return -EINVAL;
++
++    kbuf = kzalloc(size, GFP_KERNEL);
++    if (!kbuf)
++        return -ENOMEM;
++
++    for_each_process(process) {
++        state = process->state;
++
++        if (state != TASK_INTERRUPTIBLE &&
++            state != TASK_UNINTERRUPTIBLE)
++            continue;
++
++        if (state == TASK_INTERRUPTIBLE)
++            state_name = "TASK_INTERRUPTIBLE";
++        else
++            state_name = "TASK_UNINTERRUPTIBLE";
++
++        written = snprintf(
++            kbuf + used,
++            size - used,
++            "Process: %s\n"
++            " PID_Number: %ld\n"
++            " Process State: %ld (%s)\n\n",
++            process->comm,
++            (long)task_pid_nr(process),
++            state,
++            state_name
++        );
++
++        if (written >= size - used) {
++            kfree(kbuf);
++            return -ENOSPC;
++        }
++
++        used += written;
++    }
++
++    if (used == 0) {
++        written = snprintf(
++            kbuf,
++            size,
++            "No sleeping processes found.\n"
++        );
++
++        if (written >= size) {
++            kfree(kbuf);
++            return -ENOSPC;
++        }
++
++        used = written;
++    }
++
++    if (copy_to_user(buf, kbuf, used + 1)) {
++        kfree(kbuf);
++        return -EFAULT;
++    }
++
++    kfree(kbuf);
++    return used;
++}
+diff --git a/syscall/sleepProcesses.h b/syscall/sleepProcesses.h
+new file mode 100644
+index 00000000..faaf3661
+--- /dev/null
++++ b/syscall/sleepProcesses.h
+@@ -0,0 +1,6 @@
++#ifndef SLEEP_PROCESSES_H
++#define SLEEP_PROCESSES_H
++
++asmlinkage long sys_listSleepProcesses(char __user *buf, int size);
++
++#endif
