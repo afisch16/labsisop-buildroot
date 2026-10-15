@@ -1,0 +1,161 @@
+From 720739caa19f5e3871e5ca8673b99bede2f1336d Mon Sep 17 00:00:00 2001
+From: afisch16 <a.fisch@edu.pucrs.br>
+Date: Thu, 15 Oct 2026 18:18:17 +0000
+Subject: [PATCH] Tutorial 3.1: adiciona SCHED_LOW_IDLE
+
+---
+ include/uapi/linux/sched.h |  1 +
+ kernel/sched/core.c        | 15 ++++++++++++---
+ kernel/sched/fair.c        | 15 +++++++++++----
+ kernel/sched/sched.h       | 12 ++++++++++--
+ 4 files changed, 34 insertions(+), 9 deletions(-)
+
+diff --git a/include/uapi/linux/sched.h b/include/uapi/linux/sched.h
+index e2a6c7b3..b14439e0 100644
+--- a/include/uapi/linux/sched.h
++++ b/include/uapi/linux/sched.h
+@@ -39,6 +39,7 @@
+ /* SCHED_ISO: reserved but not implemented yet */
+ #define SCHED_IDLE		5
+ #define SCHED_DEADLINE		6
++#define SCHED_LOW_IDLE		7
+ 
+ /* Can be ORed in to make sure the process is reverted back to SCHED_NORMAL on fork */
+ #define SCHED_RESET_ON_FORK     0x40000000
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 99326c37..0bcac0e7 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -739,8 +739,14 @@ static void set_load_weight(struct task_struct *p)
+ 	struct load_weight *load = &p->se.load;
+ 
+ 	/*
+-	 * SCHED_IDLE tasks get minimal weight:
++	 * SCHED_IDLE and SCHED_LOW_IDLE tasks get minimal weights:
+ 	 */
++	if (idle_low_policy(p->policy)) {
++		load->weight = scale_load(WEIGHT_LOW_IDLEPRIO);
++		load->inv_weight = WMULT_LOW_IDLEPRIO;
++		return;
++	}
++
+ 	if (idle_policy(p->policy)) {
+ 		load->weight = scale_load(WEIGHT_IDLEPRIO);
+ 		load->inv_weight = WMULT_IDLEPRIO;
+@@ -4047,10 +4053,11 @@ static int __sched_setscheduler(struct task_struct *p,
+ 			return -EPERM;
+ 
+ 		/*
+-		 * Treat SCHED_IDLE as nice 20. Only allow a switch to
++		 * Treat idle policies as nice 20. Only allow a switch to
+ 		 * SCHED_NORMAL if the RLIMIT_NICE would normally permit it.
+ 		 */
+-		if (idle_policy(p->policy) && !idle_policy(policy)) {
++		if ((idle_policy(p->policy) || idle_low_policy(p->policy)) &&
++		    !idle_policy(policy) && !idle_low_policy(policy)) {
+ 			if (!can_nice(p, task_nice(p)))
+ 				return -EPERM;
+ 		}
+@@ -5021,6 +5028,7 @@ SYSCALL_DEFINE1(sched_get_priority_max, int, policy)
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
+ 	case SCHED_IDLE:
++	case SCHED_LOW_IDLE:
+ 		ret = 0;
+ 		break;
+ 	}
+@@ -5048,6 +5056,7 @@ SYSCALL_DEFINE1(sched_get_priority_min, int, policy)
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
+ 	case SCHED_IDLE:
++	case SCHED_LOW_IDLE:
+ 		ret = 0;
+ 	}
+ 	return ret;
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index c95880e2..9f2f9d0f 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -6064,7 +6064,8 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
+ 
+ static void set_last_buddy(struct sched_entity *se)
+ {
+-	if (entity_is_task(se) && unlikely(task_of(se)->policy == SCHED_IDLE))
++	if (entity_is_task(se) && unlikely(idle_policy(task_of(se)->policy) ||
++					idle_low_policy(task_of(se)->policy)))
+ 		return;
+ 
+ 	for_each_sched_entity(se) {
+@@ -6076,7 +6077,8 @@ static void set_last_buddy(struct sched_entity *se)
+ 
+ static void set_next_buddy(struct sched_entity *se)
+ {
+-	if (entity_is_task(se) && unlikely(task_of(se)->policy == SCHED_IDLE))
++	if (entity_is_task(se) && unlikely(idle_policy(task_of(se)->policy) ||
++					idle_low_policy(task_of(se)->policy)))
+ 		return;
+ 
+ 	for_each_sched_entity(se) {
+@@ -6135,7 +6137,12 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
+ 
+ 	/* Idle tasks are by definition preempted by non-idle tasks. */
+ 	if (unlikely(curr->policy == SCHED_IDLE) &&
+-	    likely(p->policy != SCHED_IDLE))
++	    likely(p->policy != SCHED_IDLE && p->policy != SCHED_LOW_IDLE))
++		goto preempt;
++
++	/* SCHED_LOW_IDLE yields to every other scheduling policy. */
++	if (unlikely(curr->policy == SCHED_LOW_IDLE) &&
++	    likely(p->policy != SCHED_LOW_IDLE))
+ 		goto preempt;
+ 
+ 	/*
+@@ -6534,7 +6541,7 @@ static int task_hot(struct task_struct *p, struct lb_env *env)
+ 	if (p->sched_class != &fair_sched_class)
+ 		return 0;
+ 
+-	if (unlikely(p->policy == SCHED_IDLE))
++	if (unlikely(idle_policy(p->policy) || idle_low_policy(p->policy)))
+ 		return 0;
+ 
+ 	/*
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index eeef1a30..90261a75 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -125,6 +125,12 @@ static inline int idle_policy(int policy)
+ {
+ 	return policy == SCHED_IDLE;
+ }
++
++static inline int idle_low_policy(int policy)
++{
++	return policy == SCHED_LOW_IDLE;
++}
++
+ static inline int fair_policy(int policy)
+ {
+ 	return policy == SCHED_NORMAL || policy == SCHED_BATCH;
+@@ -141,8 +147,8 @@ static inline int dl_policy(int policy)
+ }
+ static inline bool valid_policy(int policy)
+ {
+-	return idle_policy(policy) || fair_policy(policy) ||
+-		rt_policy(policy) || dl_policy(policy);
++	return idle_policy(policy) || idle_low_policy(policy) ||
++		fair_policy(policy) || rt_policy(policy) || dl_policy(policy);
+ }
+ 
+ static inline int task_has_rt_policy(struct task_struct *p)
+@@ -1352,6 +1358,8 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
+ 
+ #define WEIGHT_IDLEPRIO                3
+ #define WMULT_IDLEPRIO         1431655765
++#define WEIGHT_LOW_IDLEPRIO             1
++#define WMULT_LOW_IDLEPRIO              WMULT_IDLEPRIO
+ 
+ extern const int sched_prio_to_weight[40];
+ extern const u32 sched_prio_to_wmult[40];
+-- 
+2.53.0
+
