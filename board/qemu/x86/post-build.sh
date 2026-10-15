@@ -21,6 +21,3 @@ $COMPILER -o $BUILDROOT_DIR/output/target/bin/sleep_process_test $BUILDROOT_DIR/
 BUILDROOT_DIR=$BASE_DIR/..
 COMPILER=$BUILDROOT_DIR/output/host/bin/i686-buildroot-linux-gnu-gcc
 $COMPILER -o $BUILDROOT_DIR/output/target/bin/message_test $BUILDROOT_DIR/custom-scripts/message_test.c
-
-# Compile thread_runner for SCHED_IDLE and SCHED_LOW_IDLE
-$COMPILER -std=c11 -Wall -Wextra -pthread -o $BUILDROOT_DIR/output/target/bin/thread_runner $BUILDROOT_DIR/custom-scripts/thread_runner.c
