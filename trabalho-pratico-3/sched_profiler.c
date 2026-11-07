@@ -37,6 +37,7 @@ sem_t semaforo;
  */
 void *executar_thread(void *arg)
 {
+	/* lê a letra atribuída a esta thread */
 	char letra = *(char *)arg;
 
 	while (1) {
@@ -156,6 +157,7 @@ int main(int argc, char *argv[])
 	posicao_atual = buffer;
 
 	/* começa fechado; será liberado depois de configurar as threads */
+	/* o valor 0 indica compartilhamento entre threads do mesmo processo */
 	if (sem_init(&semaforo, 0, 0) != 0) {
 		perror("Não foi possível iniciar o semáforo");
 		free(buffer);
@@ -186,6 +188,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
+	/* idle e low_idle usam prioridade 0; fifo e rr começam em 1 */
 	parametros.sched_priority = prioridade;
 
 	/* cria as threads e configura a política antes de liberar a escrita */
@@ -200,8 +203,10 @@ int main(int argc, char *argv[])
 			break;
 		}
 
+		/* inclui a thread na lista para aguardá-la mesmo se a configuração falhar */
 		criadas++;
 
+		/* aplica a mesma política a cada thread antes de liberar o semáforo */
 		erro = pthread_setschedparam(threads[criadas - 1], politica,
 					     &parametros);
 		if (erro != 0) {
@@ -232,12 +237,14 @@ int main(int argc, char *argv[])
 	}
 
 	/* mostra todas as letras na ordem em que foram escritas */
+	/* escreve exatamente o tamanho do buffer, sem precisar do caractere final nulo */
 	fwrite(buffer, 1, tamanho_buffer, stdout);
 	putchar('\n');
 
 
 		/* resume cada sequência contínua de letras iguais */
 	for (size_t i = 0; i < tamanho_buffer; i++) {
+		/* imprime apenas a primeira letra de cada sequência contínua */
 		if (i == 0 || buffer[i] != buffer[i - 1])
 			putchar(buffer[i]);
 	}
@@ -248,6 +255,7 @@ int main(int argc, char *argv[])
 		size_t blocos = 0;
 
 		for (size_t j = 0; j < tamanho_buffer; j++) {
+			/* conta inícios de blocos, não todas as trocas de cpu */
 			if (buffer[j] == letras[i] &&
 			    (j == 0 || buffer[j - 1] != letras[i]))
 				blocos++;
