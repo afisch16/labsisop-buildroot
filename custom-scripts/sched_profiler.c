@@ -10,7 +10,7 @@
 
 /*
  * política LOW_IDLE foi criada no kernel do laboratório
- * caso o compilador ainda não conheça o nome, usamos o número 7
+ * se o compilador ainda não conhece o nome, usamos o número 7
  */
 #ifndef SCHED_LOW_IDLE
 #define SCHED_LOW_IDLE 7
@@ -28,7 +28,7 @@ size_t tamanho_buffer;
  * o semáforo garante que só uma thread por vez escreva
  * no buffer e atualize a posição
  */
-sem_t semaforo;
+sem_t semaforo; // evitar perder uma letra, se 2 threads ler a posicap_atual ao mesmo tempo
 
 
 /*
@@ -37,17 +37,17 @@ sem_t semaforo;
  */
 void *executar_thread(void *arg)
 {
-	/* lê a letra atribuída a esta thread */
+	/* le a letra atribuída a esta thread */
 	char letra = *(char *)arg;
 
-	while (1) {
+	while (1) {//enquanto tiver espaço
 		/* espera sua vez para acessar o buffer compartilhado */
 		if (sem_wait(&semaforo) != 0) {
-			perror("Erro ao esperar pelo semáforo");
+			perror("Erro no aguardo pelo semaforo");
 			return NULL;
 		}
 
-		/* se o buffer estiver cheio, libera o semáforo e termina */
+		/* se o buffer estiver cheio libera o semforo e termina */
 		if (posicao_atual >= buffer + tamanho_buffer) {
 			sem_post(&semaforo);
 			break;
@@ -94,8 +94,8 @@ int main(int argc, char *argv[])
 {
 	int politica;
 	long tamanho_informado;
-	long numero_threads;
-	char *fim;
+	long numero_threads; //qtd trabalhadoras
+	char *fim; //verifica as entradas
     pthread_t *threads;
 	char *letras;
 	struct sched_param parametros = {0};
@@ -103,7 +103,7 @@ int main(int argc, char *argv[])
 	long criadas = 0;
 	int erro = 0;
 
-    /* o programa precisa receber tamanho, número de threads e política */
+    /* precisa receber tamanho, numero de threads e política */
 	if (argc != 4) {
 		printf("Uso: %s <tamanho_buffer> <numero_threads> <politica>\n",
 		       argv[0]);
@@ -136,7 +136,7 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* verifica se a política informada é uma das pedidas no trabalho */
+	/* verifica se a política informada é válida */
 	politica = obter_politica(argv[3]);
 
 	if (politica == -1) {
@@ -144,30 +144,31 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-    /* reserva o espaço onde as threads vão escrever suas letras */
+    /* reserva o espaço onde as threads vao escrever as letras */
 	tamanho_buffer = (size_t)tamanho_informado;
-	buffer = malloc(tamanho_buffer);
+	buffer = malloc(tamanho_buffer); //reserva mem pras letras
 
 	if (buffer == NULL) {
 		printf("Não foi possível reservar o buffer.\n");
 		return 1;
 	}
 
-	/* a primeira escrita será no começo do buffer */
+	/* primeira escrita no começo do buffer */
 	posicao_atual = buffer;
 
-	/* começa fechado; será liberado depois de configurar as threads */
-	/* o valor 0 indica compartilhamento entre threads do mesmo processo */
+	/* começa fechado; é liberado depois de configurar as threads */
+	/* 0 indica compartilhamento entre threads do mesmo processo */
 	if (sem_init(&semaforo, 0, 0) != 0) {
-		perror("Não foi possível iniciar o semáforo");
+		perror("Não foi possível iniciar o semaforo");
 		free(buffer);
 		return 1;
 	}
 
-    /* reserva espaço para os identificadores e as letras das threads */
+    /* reserva espaço pros identificadores e as letras das threads */
 	threads = calloc(numero_threads, sizeof(*threads));
 	letras = calloc(numero_threads, sizeof(*letras));
 
+	/* se qualquer coisa falhar, libera e termina */
 	if (threads == NULL || letras == NULL) {
 		printf("Não foi possível reservar espaço para as threads.\n");
 		free(threads);
@@ -176,9 +177,10 @@ int main(int argc, char *argv[])
 		free(buffer);
 		return 1;
 	}
-	/* consulta uma prioridade válida para a política escolhida */
+	/* consulta uma prioridade valida para a politica escolhida */
 	prioridade = sched_get_priority_min(politica);
 
+	/* se qualquer coisa falhar, libera e termina */
 	if (prioridade == -1) {
 		perror("Não foi possível consultar a prioridade");
 		free(threads);
@@ -203,10 +205,10 @@ int main(int argc, char *argv[])
 			break;
 		}
 
-		/* inclui a thread na lista para aguardá-la mesmo se a configuração falhar */
+		/* inclui a thread na lista para aguardar mesmo se a configuração falhar */
 		criadas++;
 
-		/* aplica a mesma política a cada thread antes de liberar o semáforo */
+		/* aplica a mesma politica a cada thread antes de liberar o sem */
 		erro = pthread_setschedparam(threads[criadas - 1], politica,
 					     &parametros);
 		if (erro != 0) {
@@ -217,11 +219,11 @@ int main(int argc, char *argv[])
 	}
 
 
-	/* se houve erro, faz as threads criadas encontrarem o buffer cheio */
+	/* se der erro, faz as threads criadas encontrarem o buffer cheio */
 	if (erro != 0)
 		posicao_atual = buffer + tamanho_buffer;
 
-	/* libera a primeira thread; as demais recebem a vez pelo semáforo */
+	/* libera a primeira thread, as outras recebem a vez pelo semaforo */
 	sem_post(&semaforo);
 
 	/* espera todas as threads criadas terminarem */
@@ -237,14 +239,14 @@ int main(int argc, char *argv[])
 	}
 
 	/* mostra todas as letras na ordem em que foram escritas */
-	/* escreve exatamente o tamanho do buffer, sem precisar do caractere final nulo */
+	/* escreve exatamente o tamanho do buffer */
 	fwrite(buffer, 1, tamanho_buffer, stdout);
 	putchar('\n');
 
 
-		/* resume cada sequência contínua de letras iguais */
+	/* resume cada sequencia de letras iguais */
 	for (size_t i = 0; i < tamanho_buffer; i++) {
-		/* imprime apenas a primeira letra de cada sequência contínua */
+		/* imprime apenas a primeira letra de cada sequência */
 		if (i == 0 || buffer[i] != buffer[i - 1])
 			putchar(buffer[i]);
 	}
@@ -255,7 +257,7 @@ int main(int argc, char *argv[])
 		size_t blocos = 0;
 
 		for (size_t j = 0; j < tamanho_buffer; j++) {
-			/* conta inícios de blocos, não todas as trocas de cpu */
+			/* conta inicios de blocos, não todas as trocas de cpu */
 			if (buffer[j] == letras[i] &&
 			    (j == 0 || buffer[j - 1] != letras[i]))
 				blocos++;
@@ -264,7 +266,7 @@ int main(int argc, char *argv[])
 		printf("%c = %zu\n", letras[i], blocos);
 	}
 
-	/* libera os recursos usados pelo programa */
+	/* libera tudo */
 	free(threads);
 	free(letras);
 	sem_destroy(&semaforo);
