@@ -1,0 +1,366 @@
+From 0cbf34ce94f729d9bc8d8f192a6908434bec01b8 Mon Sep 17 00:00:00 2001
+From: afisch16 <a.fisch@edu.pucrs.br>
+Date: Tue, 27 Oct 2026 00:48:22 +0000
+Subject: [PATCH 1/4] Implementa SCHED_LOW_IDLE no Tutorial 3.1
+
+---
+ include/uapi/linux/sched.h |  2 ++
+ kernel/sched/core.c        | 19 +++++++++++++++----
+ kernel/sched/fair.c        | 23 ++++++++++++++++++-----
+ kernel/sched/sched.h       | 13 +++++++++++--
+ 4 files changed, 46 insertions(+), 11 deletions(-)
+
+diff --git a/include/uapi/linux/sched.h b/include/uapi/linux/sched.h
+index e2a6c7b3..092b9f47 100644
+--- a/include/uapi/linux/sched.h
++++ b/include/uapi/linux/sched.h
+@@ -39,6 +39,8 @@
+ /* SCHED_ISO: reserved but not implemented yet */
+ #define SCHED_IDLE		5
+ #define SCHED_DEADLINE		6
++/*Reserva o número 7 para a política SCHED_LOW_IDLE*/
++#define SCHED_LOW_IDLE         7
+ 
+ /* Can be ORed in to make sure the process is reverted back to SCHED_NORMAL on fork */
+ #define SCHED_RESET_ON_FORK     0x40000000
+diff --git a/kernel/sched/core.c b/kernel/sched/core.c
+index 99326c37..ebdf0d37 100644
+--- a/kernel/sched/core.c
++++ b/kernel/sched/core.c
+@@ -738,6 +738,12 @@ static void set_load_weight(struct task_struct *p)
+ 	int prio = p->static_prio - MAX_RT_PRIO;
+ 	struct load_weight *load = &p->se.load;
+ 
++	/* Aplica o peso menor às tarefas SCHED_LOW_IDLE. */
++	if (idle_low_policy(p->policy)) {
++		load->weight = scale_load(WEIGHT_LOW_IDLEPRIO);
++		load->inv_weight = WMULT_LOW_IDLEPRIO;
++		return;
++	}
+ 	/*
+ 	 * SCHED_IDLE tasks get minimal weight:
+ 	 */
+@@ -4047,10 +4053,11 @@ static int __sched_setscheduler(struct task_struct *p,
+ 			return -EPERM;
+ 
+ 		/*
+-		 * Treat SCHED_IDLE as nice 20. Only allow a switch to
+-		 * SCHED_NORMAL if the RLIMIT_NICE would normally permit it.
+-		 */
+-		if (idle_policy(p->policy) && !idle_policy(policy)) {
++		* Trata SCHED_IDLE e SCHED_LOW_IDLE como nice 20.
++		* Sair dessas políticas exige permissão pelo RLIMIT_NICE.
++		*/
++		if ((idle_policy(p->policy) || idle_low_policy(p->policy)) &&
++		!idle_policy(policy) && !idle_low_policy(policy)) {
+ 			if (!can_nice(p, task_nice(p)))
+ 				return -EPERM;
+ 		}
+@@ -5021,6 +5028,8 @@ SYSCALL_DEFINE1(sched_get_priority_max, int, policy)
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
+ 	case SCHED_IDLE:
++	/* A prioridade máxima de SCHED_LOW_IDLE é 0. */
++	case SCHED_LOW_IDLE:
+ 		ret = 0;
+ 		break;
+ 	}
+@@ -5048,6 +5057,8 @@ SYSCALL_DEFINE1(sched_get_priority_min, int, policy)
+ 	case SCHED_NORMAL:
+ 	case SCHED_BATCH:
+ 	case SCHED_IDLE:
++	/* A prioridade mínima de SCHED_LOW_IDLE é 0. */
++	case SCHED_LOW_IDLE:
+ 		ret = 0;
+ 	}
+ 	return ret;
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index c95880e2..8e89bc22 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -6064,7 +6064,10 @@ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se)
+ 
+ static void set_last_buddy(struct sched_entity *se)
+ {
+-	if (entity_is_task(se) && unlikely(task_of(se)->policy == SCHED_IDLE))
++	/* Tarefas IDLE e LOW_IDLE não são escolhidas como último buddy. */
++	if (entity_is_task(se) &&
++	unlikely(idle_policy(task_of(se)->policy) ||
++             idle_low_policy(task_of(se)->policy)))
+ 		return;
+ 
+ 	for_each_sched_entity(se) {
+@@ -6076,7 +6079,10 @@ static void set_last_buddy(struct sched_entity *se)
+ 
+ static void set_next_buddy(struct sched_entity *se)
+ {
+-	if (entity_is_task(se) && unlikely(task_of(se)->policy == SCHED_IDLE))
++	/* Tarefas IDLE e LOW_IDLE não são escolhidas como próximo buddy. */
++	if (entity_is_task(se) &&
++	unlikely(idle_policy(task_of(se)->policy) ||
++             idle_low_policy(task_of(se)->policy)))
+ 		return;
+ 
+ 	for_each_sched_entity(se) {
+@@ -6133,9 +6139,15 @@ static void check_preempt_wakeup(struct rq *rq, struct task_struct *p, int wake_
+ 	if (test_tsk_need_resched(curr))
+ 		return;
+ 
+-	/* Idle tasks are by definition preempted by non-idle tasks. */
++	/* LOW_IDLE não interrompe uma tarefa IDLE em execução. */
+ 	if (unlikely(curr->policy == SCHED_IDLE) &&
+-	    likely(p->policy != SCHED_IDLE))
++	likely(p->policy != SCHED_IDLE &&
++		p->policy != SCHED_LOW_IDLE))
++		goto preempt;
++
++	/* Qualquer outra política pode interromper uma tarefa LOW_IDLE. */
++	if (unlikely(curr->policy == SCHED_LOW_IDLE) &&
++	likely(p->policy != SCHED_LOW_IDLE))
+ 		goto preempt;
+ 
+ 	/*
+@@ -6534,7 +6546,8 @@ static int task_hot(struct task_struct *p, struct lb_env *env)
+ 	if (p->sched_class != &fair_sched_class)
+ 		return 0;
+ 
+-	if (unlikely(p->policy == SCHED_IDLE))
++	/* IDLE e LOW_IDLE não são consideradas tarefas quentes no cache. */
++	if (unlikely(idle_policy(p->policy) || idle_low_policy(p->policy)))
+ 		return 0;
+ 
+ 	/*
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index eeef1a30..56ec0ad5 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -125,6 +125,11 @@ static inline int idle_policy(int policy)
+ {
+ 	return policy == SCHED_IDLE;
+ }
++/*Identifica quando a política informada é SCHED_LOW_IDLE*/
++static inline int idle_low_policy(int policy)
++{
++	return policy == SCHED_LOW_IDLE;
++}
+ static inline int fair_policy(int policy)
+ {
+ 	return policy == SCHED_NORMAL || policy == SCHED_BATCH;
+@@ -141,8 +146,9 @@ static inline int dl_policy(int policy)
+ }
+ static inline bool valid_policy(int policy)
+ {
+-	return idle_policy(policy) || fair_policy(policy) ||
+-		rt_policy(policy) || dl_policy(policy);
++	/* Aceita SCHED_LOW_IDLE junto das políticas que já tinham */
++	return idle_policy(policy) || idle_low_policy(policy) ||
++	       fair_policy(policy) || rt_policy(policy) || dl_policy(policy);
+ }
+ 
+ static inline int task_has_rt_policy(struct task_struct *p)
+@@ -1352,6 +1358,9 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
+ 
+ #define WEIGHT_IDLEPRIO                3
+ #define WMULT_IDLEPRIO         1431655765
++/* Dá pro SCHED_LOW_IDLE um peso menor que o de SCHED_IDLE. */
++#define WEIGHT_LOW_IDLEPRIO	1
++#define WMULT_LOW_IDLEPRIO	WMULT_IDLEPRIO
+ 
+ extern const int sched_prio_to_weight[40];
+ extern const u32 sched_prio_to_wmult[40];
+-- 
+2.53.0
+
+
+From 8f2930d62b4e1774e24d88ebcecd61d59ab1dcab Mon Sep 17 00:00:00 2001
+From: afisch16 <a.fisch@edu.pucrs.br>
+Date: Thu, 29 Oct 2026 21:57:19 +0000
+Subject: [PATCH 2/4] Habilita Ftrace no defconfig do kernel
+
+---
+ arch/x86/configs/qemu_x86_custom_defconfig | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/x86/configs/qemu_x86_custom_defconfig b/arch/x86/configs/qemu_x86_custom_defconfig
+index a4da99ff..e75aeaf0 100644
+--- a/arch/x86/configs/qemu_x86_custom_defconfig
++++ b/arch/x86/configs/qemu_x86_custom_defconfig
+@@ -50,3 +50,5 @@ CONFIG_EXT4_FS=y
+ CONFIG_AUTOFS4_FS=y
+ CONFIG_TMPFS=y
+ CONFIG_TMPFS_POSIX_ACL=y
++CONFIG_FUNCTION_TRACER=y
++CONFIG_FUNCTION_GRAPH_TRACER=y
+-- 
+2.53.0
+
+
+From 9be15840013065a09df2df4c5347ed7b944c9633 Mon Sep 17 00:00:00 2001
+From: afisch16 <a.fisch@edu.pucrs.br>
+Date: Wed, 4 Nov 2026 01:23:31 +0000
+Subject: [PATCH 3/4] Prioriza tarefas acima de SCHED_LOW_IDLE
+
+---
+ kernel/sched/fair.c | 38 ++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 38 insertions(+)
+
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index 8e89bc22..ccfdd5a6 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -3890,6 +3890,41 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ static int
+ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
+ 
++/*
++ * Se o CFS escolher LOW_IDLE, procura uma tarefa pronta com outra política.
++ * Entre as candidatas, mantém a escolha pelo menor tempo virtual.
++ */
++static struct sched_entity *
++prefer_non_low_idle(struct cfs_rq *cfs_rq, struct sched_entity *curr,
++		    struct sched_entity *selected)
++{
++	struct sched_entity *candidate;
++	struct sched_entity *best = NULL;
++
++	/* A busca só é necessária quando a tarefa escolhida é LOW_IDLE. */
++	if (!selected || !entity_is_task(selected) ||
++	    !idle_low_policy(task_of(selected)->policy))
++		return selected;
++
++	/* A tarefa atual pode estar pronta, mesmo fora da árvore de espera. */
++	if (curr && curr->on_rq && entity_is_task(curr) &&
++	    !idle_low_policy(task_of(curr)->policy))
++		best = curr;
++
++	/* Procura na árvore tarefas prontas de outras políticas. */
++	for (candidate = __pick_first_entity(cfs_rq); candidate;
++	     candidate = __pick_next_entity(candidate)) {
++		if (!entity_is_task(candidate) ||
++		    idle_low_policy(task_of(candidate)->policy))
++			continue;
++
++		if (!best || entity_before(candidate, best))
++			best = candidate;
++	}
++
++	/* Mantém LOW_IDLE somente quando não encontrou outra candidata. */
++	return best ? best : selected;
++}
+ /*
+  * Pick the next process, keeping these things in mind, in this order:
+  * 1) keep things fair between processes/task groups
+@@ -3943,6 +3978,9 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+ 	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1)
+ 		se = cfs_rq->next;
+ 
++	/* Prefere outra política quando LOW_IDLE foi escolhida e há tarefa pronta. */
++	se = prefer_non_low_idle(cfs_rq, curr, se);
++
+ 	clear_buddies(cfs_rq, se);
+ 
+ 	return se;
+-- 
+2.53.0
+
+
+From 22697f1bf331425dbd19f72e2fb029b22e417e57 Mon Sep 17 00:00:00 2001
+From: afisch16 <a.fisch@edu.pucrs.br>
+Date: Wed, 11 Nov 2026 22:40:53 +0000
+Subject: [PATCH 4/4] Ajusta peso LOW_IDLE e habilita estatisticas de
+ escalonamento
+
+---
+ arch/x86/configs/qemu_x86_custom_defconfig |  3 ++
+ kernel/sched/fair.c                        | 38 ----------------------
+ kernel/sched/sched.h                       |  7 ++--
+ 3 files changed, 7 insertions(+), 41 deletions(-)
+
+diff --git a/arch/x86/configs/qemu_x86_custom_defconfig b/arch/x86/configs/qemu_x86_custom_defconfig
+index e75aeaf0..225ebdee 100644
+--- a/arch/x86/configs/qemu_x86_custom_defconfig
++++ b/arch/x86/configs/qemu_x86_custom_defconfig
+@@ -52,3 +52,6 @@ CONFIG_TMPFS=y
+ CONFIG_TMPFS_POSIX_ACL=y
+ CONFIG_FUNCTION_TRACER=y
+ CONFIG_FUNCTION_GRAPH_TRACER=y
++# habilita as estatisticas usadas para contar escalonamentos
++CONFIG_DEBUG_KERNEL=y
++CONFIG_SCHEDSTATS=y
+diff --git a/kernel/sched/fair.c b/kernel/sched/fair.c
+index ccfdd5a6..8e89bc22 100644
+--- a/kernel/sched/fair.c
++++ b/kernel/sched/fair.c
+@@ -3890,41 +3890,6 @@ set_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *se)
+ static int
+ wakeup_preempt_entity(struct sched_entity *curr, struct sched_entity *se);
+ 
+-/*
+- * Se o CFS escolher LOW_IDLE, procura uma tarefa pronta com outra política.
+- * Entre as candidatas, mantém a escolha pelo menor tempo virtual.
+- */
+-static struct sched_entity *
+-prefer_non_low_idle(struct cfs_rq *cfs_rq, struct sched_entity *curr,
+-		    struct sched_entity *selected)
+-{
+-	struct sched_entity *candidate;
+-	struct sched_entity *best = NULL;
+-
+-	/* A busca só é necessária quando a tarefa escolhida é LOW_IDLE. */
+-	if (!selected || !entity_is_task(selected) ||
+-	    !idle_low_policy(task_of(selected)->policy))
+-		return selected;
+-
+-	/* A tarefa atual pode estar pronta, mesmo fora da árvore de espera. */
+-	if (curr && curr->on_rq && entity_is_task(curr) &&
+-	    !idle_low_policy(task_of(curr)->policy))
+-		best = curr;
+-
+-	/* Procura na árvore tarefas prontas de outras políticas. */
+-	for (candidate = __pick_first_entity(cfs_rq); candidate;
+-	     candidate = __pick_next_entity(candidate)) {
+-		if (!entity_is_task(candidate) ||
+-		    idle_low_policy(task_of(candidate)->policy))
+-			continue;
+-
+-		if (!best || entity_before(candidate, best))
+-			best = candidate;
+-	}
+-
+-	/* Mantém LOW_IDLE somente quando não encontrou outra candidata. */
+-	return best ? best : selected;
+-}
+ /*
+  * Pick the next process, keeping these things in mind, in this order:
+  * 1) keep things fair between processes/task groups
+@@ -3978,9 +3943,6 @@ pick_next_entity(struct cfs_rq *cfs_rq, struct sched_entity *curr)
+ 	if (cfs_rq->next && wakeup_preempt_entity(cfs_rq->next, left) < 1)
+ 		se = cfs_rq->next;
+ 
+-	/* Prefere outra política quando LOW_IDLE foi escolhida e há tarefa pronta. */
+-	se = prefer_non_low_idle(cfs_rq, curr, se);
+-
+ 	clear_buddies(cfs_rq, se);
+ 
+ 	return se;
+diff --git a/kernel/sched/sched.h b/kernel/sched/sched.h
+index 56ec0ad5..c6e3e2c7 100644
+--- a/kernel/sched/sched.h
++++ b/kernel/sched/sched.h
+@@ -1358,9 +1358,10 @@ static inline void finish_lock_switch(struct rq *rq, struct task_struct *prev)
+ 
+ #define WEIGHT_IDLEPRIO                3
+ #define WMULT_IDLEPRIO         1431655765
+-/* Dá pro SCHED_LOW_IDLE um peso menor que o de SCHED_IDLE. */
+-#define WEIGHT_LOW_IDLEPRIO	1
+-#define WMULT_LOW_IDLEPRIO	WMULT_IDLEPRIO
++/* peso menor que o de idle para comparar as duas politicas */
++#define WEIGHT_LOW_IDLEPRIO        1
++/* inverso do peso 1 limitado ao maior valor de u32 */
++#define WMULT_LOW_IDLEPRIO         4294967295U
+ 
+ extern const int sched_prio_to_weight[40];
+ extern const u32 sched_prio_to_wmult[40];
+-- 
+2.53.0
+

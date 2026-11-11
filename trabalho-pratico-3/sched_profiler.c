@@ -30,6 +30,17 @@ size_t tamanho_buffer;
  */
 sem_t semaforo; // evitar perder uma letra, se 2 threads ler a posicap_atual ao mesmo tempo
 
+/* guarda a configuracao e os resultados de cada thread */
+struct dados_thread {
+	char letra;
+	int politica;
+	int prioridade;
+	size_t caracteres;
+	unsigned long long escalonamentos;
+	/* indica se a contagem foi lida do kernel */
+	int estatistica_ok;
+};
+
 
 /*
  * cada thread recebe uma letra e escreve no buffer enquanto
@@ -37,8 +48,11 @@ sem_t semaforo; // evitar perder uma letra, se 2 threads ler a posicap_atual ao 
  */
 void *executar_thread(void *arg)
 {
-	/* le a letra atribuída a esta thread */
-	char letra = *(char *)arg;
+	/* recebe os dados desta thread enviados pela main */
+	struct dados_thread *dados = arg;
+	FILE *arquivo;
+	unsigned long long tempo_cpu;
+	unsigned long long tempo_espera;
 
 	while (1) {//enquanto tiver espaço
 		/* espera sua vez para acessar o buffer compartilhado */
@@ -54,11 +68,28 @@ void *executar_thread(void *arg)
 		}
 
 		/* escreve a letra e avança para a próxima posição */
-		*posicao_atual = letra;
+		*posicao_atual = dados->letra;
 		posicao_atual++;
+
+		/* conta a letra que acabou de escrever */
+		dados->caracteres++;
 
 		/* libera o acesso para as outras threads */
 		sem_post(&semaforo);
+	}
+
+	/* abre as estatisticas da thread que esta executando */
+	arquivo = fopen("/proc/thread-self/schedstat", "r");
+	if (arquivo != NULL) {
+		/* os dois primeiros numeros sao tempos e o terceiro conta execucoes */
+		if (fscanf(arquivo, "%llu %llu %llu",
+			   &tempo_cpu, &tempo_espera,
+			   &dados->escalonamentos) == 3) {
+			/* so aceita o resultado se conseguiu ler os tres numeros */
+			dados->estatistica_ok = 1;
+		}
+
+		fclose(arquivo);
 	}
 
 	return NULL;
@@ -88,24 +119,85 @@ int obter_politica(const char *nome)
 	return -1;
 }
 
+/* devolve o nome da politica usado na saida */
+const char *nome_politica(int politica)
+{
+	switch (politica) {
+	case SCHED_LOW_IDLE:
+		return "SCHED_LOW_IDLE";
+	case SCHED_IDLE:
+		return "SCHED_IDLE";
+	case SCHED_FIFO:
+		return "SCHED_FIFO";
+	case SCHED_RR:
+		return "SCHED_RR";
+	default:
+		return "desconhecida";
+	}
+}
+
+/* pega a politica e a prioridade do argumento */
+int ler_configuracao(const char *texto, int *politica, int *prioridade)
+{
+	const char *separador = strchr(texto, ':');
+	char nome[32];
+	char *fim;
+	size_t tamanho_nome;
+	long valor;
+	int minimo;
+	int maximo;
+
+	/* sem : nao tem como separar os valores */
+	if (separador == NULL)
+		return -1;
+
+	/* copia so o nome para consultar o numero da politica */
+	tamanho_nome = (size_t)(separador - texto);
+	if (tamanho_nome == 0 || tamanho_nome >= sizeof(nome))
+		return -1;
+
+	memcpy(nome, texto, tamanho_nome);
+	nome[tamanho_nome] = '\0';
+
+	/* nao aceita nomes fora das quatro politicas do trabalho */
+	*politica = obter_politica(nome);
+	if (*politica == -1)
+		return -1;
+
+	/* converte o texto depois do : em numero */
+	errno = 0;
+	valor = strtol(separador + 1, &fim, 10);
+	if (errno != 0 || fim == separador + 1 || *fim != '\0')
+		return -1;
+
+	/* confere se a prioridade pode ser usada nessa politica */
+	minimo = sched_get_priority_min(*politica);
+	maximo = sched_get_priority_max(*politica);
+	if (minimo == -1 || maximo == -1 ||
+	    valor < minimo || valor > maximo)
+		return -1;
+
+	/* guarda a prioridade depois da conferencia */
+	*prioridade = (int)valor;
+	return 0;
+}
+
 
 
 int main(int argc, char *argv[])
 {
-	int politica;
 	long tamanho_informado;
 	long numero_threads; //qtd trabalhadoras
 	char *fim; //verifica as entradas
     pthread_t *threads;
-	char *letras;
+	struct dados_thread *dados;
 	struct sched_param parametros = {0};
-	int prioridade;
 	long criadas = 0;
 	int erro = 0;
 
-    /* precisa receber tamanho, numero de threads e política */
-	if (argc != 4) {
-		printf("Uso: %s <tamanho_buffer> <numero_threads> <politica>\n",
+    /* recebe tamanho quantidade de threads e suas politicas */
+	if (argc < 4) {
+		printf("Uso: %s <tamanho_buffer> <numero_threads> <politica:prioridade>...\n",
 		       argv[0]);
 		return 1;
 	}
@@ -136,11 +228,9 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	/* verifica se a política informada é válida */
-	politica = obter_politica(argv[3]);
-
-	if (politica == -1) {
-		printf("Política inválida: %s\n", argv[3]);
+	/* confere se foi dada uma configuracao para cada thread */
+	if (argc != numero_threads + 3) {
+		printf("Informe uma politica e prioridade para cada thread.\n");
 		return 1;
 	}
 
@@ -164,41 +254,36 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-    /* reserva espaço pros identificadores e as letras das threads */
+    /* reserva espaco para os ids e os dados das threads */
 	threads = calloc(numero_threads, sizeof(*threads));
-	letras = calloc(numero_threads, sizeof(*letras));
+	dados = calloc(numero_threads, sizeof(*dados));
 
 	/* se qualquer coisa falhar, libera e termina */
-	if (threads == NULL || letras == NULL) {
+	if (threads == NULL || dados == NULL) {
 		printf("Não foi possível reservar espaço para as threads.\n");
 		free(threads);
-		free(letras);
+		free(dados);
 		sem_destroy(&semaforo);
 		free(buffer);
 		return 1;
 	}
-	/* consulta uma prioridade valida para a politica escolhida */
-	prioridade = sched_get_priority_min(politica);
-
-	/* se qualquer coisa falhar, libera e termina */
-	if (prioridade == -1) {
-		perror("Não foi possível consultar a prioridade");
-		free(threads);
-		free(letras);
-		sem_destroy(&semaforo);
-		free(buffer);
-		return 1;
-	}
-
-	/* idle e low_idle usam prioridade 0; fifo e rr começam em 1 */
-	parametros.sched_priority = prioridade;
-
-	/* cria as threads e configura a política antes de liberar a escrita */
+	/* cria as threads e configura a politica antes da escrita */
 	while (criadas < numero_threads) {
-		letras[criadas] = (char)('A' + criadas);
+		/* identifica esta thread pela sua letra */
+		dados[criadas].letra = (char)('A' + criadas);
+
+		/* define a politica e a prioridade desta thread */
+		if (ler_configuracao(argv[3 + criadas],
+				     &dados[criadas].politica,
+				     &dados[criadas].prioridade) != 0) {
+			fprintf(stderr, "Configuracao invalida: %s\n",
+				argv[3 + criadas]);
+			erro = EINVAL;
+			break;
+		}
 
 		erro = pthread_create(&threads[criadas], NULL, executar_thread,
-				      &letras[criadas]);
+				      &dados[criadas]);
 		if (erro != 0) {
 			fprintf(stderr, "Não foi possível criar a thread: %s\n",
 				strerror(erro));
@@ -208,8 +293,10 @@ int main(int argc, char *argv[])
 		/* inclui a thread na lista para aguardar mesmo se a configuração falhar */
 		criadas++;
 
-		/* aplica a mesma politica a cada thread antes de liberar o sem */
-		erro = pthread_setschedparam(threads[criadas - 1], politica,
+		/* aplica a politica e a prioridade desta thread antes da escrita */
+		parametros.sched_priority = dados[criadas - 1].prioridade;
+		erro = pthread_setschedparam(threads[criadas - 1],
+					     dados[criadas - 1].politica,
 					     &parametros);
 		if (erro != 0) {
 			fprintf(stderr, "Não foi possível aplicar a política: %s\n",
@@ -232,7 +319,7 @@ int main(int argc, char *argv[])
 
 	if (erro != 0) {
 		free(threads);
-		free(letras);
+		free(dados);
 		sem_destroy(&semaforo);
 		free(buffer);
 		return 1;
@@ -257,18 +344,28 @@ int main(int argc, char *argv[])
 		size_t blocos = 0;
 
 		for (size_t j = 0; j < tamanho_buffer; j++) {
-			/* conta inicios de blocos, não todas as trocas de cpu */
-			if (buffer[j] == letras[i] &&
-			    (j == 0 || buffer[j - 1] != letras[i]))
+			/* conta inicios de blocos, nao todas as trocas de cpu */
+			if (buffer[j] == dados[i].letra &&
+			    (j == 0 || buffer[j - 1] != dados[i].letra))
 				blocos++;
 		}
 
-		printf("%c = %zu\n", letras[i], blocos);
+		/* mostra a configuracao e os resultados desta thread */
+		if (dados[i].estatistica_ok) {
+			printf("%c: politica=%s prioridade=%d blocos=%zu caracteres=%zu escalonamentos=%llu\n",
+			       dados[i].letra, nome_politica(dados[i].politica),
+			       dados[i].prioridade, blocos, dados[i].caracteres,
+			       dados[i].escalonamentos);
+		} else {
+			printf("%c: politica=%s prioridade=%d blocos=%zu caracteres=%zu escalonamentos=indisponivel\n",
+			       dados[i].letra, nome_politica(dados[i].politica),
+			       dados[i].prioridade, blocos, dados[i].caracteres);
+		}
 	}
 
 	/* libera tudo */
 	free(threads);
-	free(letras);
+	free(dados);
 	sem_destroy(&semaforo);
 	free(buffer);
 
