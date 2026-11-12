@@ -1,0 +1,60 @@
+TRABALHO PRATICO 3 — RESULTADOS DAS EXECUCOES
+Buffer: 5.000.000 de posicoes
+Cada linha apresenta politica, prioridade, blocos, caracteres e escalonamentos por thread
+
+=== fifo_diff_2t_1cpu ===
+A: politica=SCHED_FIFO prioridade=1 blocos=0 caracteres=0 escalonamentos=2
+B: politica=SCHED_FIFO prioridade=2 blocos=1 caracteres=5000000 escalonamentos=7
+
+=== fifo_diff_2t_2cpu ===
+A: politica=SCHED_FIFO prioridade=1 blocos=416686 caracteres=2434225 escalonamentos=22347
+B: politica=SCHED_FIFO prioridade=2 blocos=416686 caracteres=2565775 escalonamentos=20801
+
+=== fifo_rr_equal_2t_1cpu ===
+A: politica=SCHED_FIFO prioridade=1 blocos=1 caracteres=5000000 escalonamentos=7
+B: politica=SCHED_RR prioridade=1 blocos=0 caracteres=0 escalonamentos=2
+
+=== fifo_rr_rr_high_2t_1cpu ===
+A: politica=SCHED_FIFO prioridade=1 blocos=0 caracteres=0 escalonamentos=2
+B: politica=SCHED_RR prioridade=2 blocos=1 caracteres=5000000 escalonamentos=7
+
+=== idle_low_2t_1cpu ===
+A: politica=SCHED_IDLE prioridade=0 blocos=108 caracteres=3186188 escalonamentos=238
+B: politica=SCHED_LOW_IDLE prioridade=0 blocos=107 caracteres=1813812 escalonamentos=230
+
+=== idle_low_2t_2cpu ===
+A: politica=SCHED_IDLE prioridade=0 blocos=403611 caracteres=2436994 escalonamentos=25915
+B: politica=SCHED_LOW_IDLE prioridade=0 blocos=403612 caracteres=2563006 escalonamentos=14257
+
+=== idle_low_4t_1cpu ===
+A: politica=SCHED_IDLE prioridade=0 blocos=107 caracteres=1700393 escalonamentos=249
+B: politica=SCHED_IDLE prioridade=0 blocos=105 caracteres=1898761 escalonamentos=244
+C: politica=SCHED_LOW_IDLE prioridade=0 blocos=75 caracteres=651954 escalonamentos=160
+D: politica=SCHED_LOW_IDLE prioridade=0 blocos=73 caracteres=748892 escalonamentos=164
+
+=== idle_low_4t_2cpu ===
+A: politica=SCHED_IDLE prioridade=0 blocos=1001844 caracteres=1234821 escalonamentos=5327
+B: politica=SCHED_IDLE prioridade=0 blocos=1885144 caracteres=2403576 escalonamentos=2903
+C: politica=SCHED_LOW_IDLE prioridade=0 blocos=555528 caracteres=682173 escalonamentos=3727
+D: politica=SCHED_LOW_IDLE prioridade=0 blocos=558097 caracteres=679430 escalonamentos=3870
+
+=== rr_diff_2t_1cpu ===
+A: politica=SCHED_RR prioridade=1 blocos=0 caracteres=0 escalonamentos=2
+B: politica=SCHED_RR prioridade=2 blocos=1 caracteres=5000000 escalonamentos=6
+
+=== rr_diff_2t_2cpu ===
+A: politica=SCHED_RR prioridade=1 blocos=552873 caracteres=2473770 escalonamentos=20363
+B: politica=SCHED_RR prioridade=2 blocos=552874 caracteres=2526230 escalonamentos=19245
+
+=== rr_equal_4t_1cpu ===
+A: politica=SCHED_RR prioridade=1 blocos=5 caracteres=935960 escalonamentos=11
+B: politica=SCHED_RR prioridade=1 blocos=5 caracteres=2151475 escalonamentos=10
+C: politica=SCHED_RR prioridade=1 blocos=4 caracteres=1510244 escalonamentos=10
+D: politica=SCHED_RR prioridade=1 blocos=4 caracteres=402321 escalonamentos=12
+
+=== rr_equal_4t_2cpu ===
+A: politica=SCHED_RR prioridade=1 blocos=1105671 caracteres=1232432 escalonamentos=1206
+B: politica=SCHED_RR prioridade=1 blocos=1106885 caracteres=1226723 escalonamentos=1252
+C: politica=SCHED_RR prioridade=1 blocos=1161885 caracteres=1265905 escalonamentos=1380
+D: politica=SCHED_RR prioridade=1 blocos=1154365 caracteres=1274940 escalonamentos=1186
+

@@ -1,0 +1,2 @@
+A: politica=SCHED_FIFO prioridade=1 blocos=416686 caracteres=2434225 escalonamentos=22347
+B: politica=SCHED_FIFO prioridade=2 blocos=416686 caracteres=2565775 escalonamentos=20801

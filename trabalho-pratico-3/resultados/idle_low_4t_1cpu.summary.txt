@@ -1,0 +1,4 @@
+A: politica=SCHED_IDLE prioridade=0 blocos=107 caracteres=1700393 escalonamentos=249
+B: politica=SCHED_IDLE prioridade=0 blocos=105 caracteres=1898761 escalonamentos=244
+C: politica=SCHED_LOW_IDLE prioridade=0 blocos=75 caracteres=651954 escalonamentos=160
+D: politica=SCHED_LOW_IDLE prioridade=0 blocos=73 caracteres=748892 escalonamentos=164

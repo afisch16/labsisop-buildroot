@@ -1,0 +1,2 @@
+A: politica=SCHED_FIFO prioridade=1 blocos=1 caracteres=5000000 escalonamentos=7
+B: politica=SCHED_RR prioridade=1 blocos=0 caracteres=0 escalonamentos=2

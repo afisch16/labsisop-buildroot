@@ -1,0 +1,2 @@
+A: politica=SCHED_RR prioridade=1 blocos=552873 caracteres=2473770 escalonamentos=20363
+B: politica=SCHED_RR prioridade=2 blocos=552874 caracteres=2526230 escalonamentos=19245
